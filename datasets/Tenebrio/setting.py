@@ -3,11 +3,11 @@ from easydict import EasyDict as edict
 __C_Tenebrio = edict()
 cfg_data = __C_Tenebrio
 
-# Path to the prepared Tenebrio data root. Must contain `train/img`, `train/den`,
-# `val/img`, `val/den` (density maps stored as .csv at 1/8 of the image scale).
-# Resolution variants live in sibling directories — e.g. 386x260, 1544x1038 —
-# switch by repointing this.
-__C_Tenebrio.DATA_PATH = '/home/umrobotics/C-3-Framework/datasets/Tenebrio/772x519'
+# Path to the prepared Tenebrio data root, relative to where train.py is run
+# (the project root). Must contain `train/img`, `train/den`, `val/img`, `val/den`,
+# with density maps stored as .csv. Built by running scripts/split_tenebrio.py
+# from inside exp/data/, which creates the {train,val,test}/{img,den}/ tree.
+__C_Tenebrio.DATA_PATH = './exp/data/Tenebrio'
 
 # ImageNet mean/std — correct for CSRNet's pretrained VGG16 frontend
 __C_Tenebrio.MEAN_STD = (
