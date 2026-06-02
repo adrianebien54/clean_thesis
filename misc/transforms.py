@@ -156,3 +156,74 @@ class GTScaleDown(object):
         tmp = np.array(img.resize((w//self.factor, h//self.factor), Image.BICUBIC))*self.factor*self.factor
         img = Image.fromarray(tmp)
         return img
+
+
+# ===============================augmentation transforms============================
+
+class RandomVerticallyFlip(object):
+    """Vertically flip both image and density map with probability 0.5."""
+    def __call__(self, img, mask):
+        if random.random() < 0.5:
+            return img.transpose(Image.FLIP_TOP_BOTTOM), mask.transpose(Image.FLIP_TOP_BOTTOM)
+        return img, mask
+
+
+class RandomRotationJoint(object):
+    """Rotate both image and density map by the same random angle in [-degrees, +degrees]."""
+    def __init__(self, degrees):
+        self.degrees = degrees
+
+    def __call__(self, img, mask):
+        angle = random.uniform(-self.degrees, self.degrees)
+        img  = img.rotate(angle,  resample=Image.BILINEAR, expand=False)
+        mask = mask.rotate(angle, resample=Image.NEAREST,  expand=False)
+        return img, mask
+
+
+class RandomTranslationJoint(object):
+    """Translate both image and density map by the same random pixel offset."""
+    def __init__(self, translate):
+        self.translate = translate  # e.g. 0.02 for ±2%
+
+    def __call__(self, img, mask):
+        w, h = img.size
+        dx = random.uniform(-self.translate, self.translate) * w
+        dy = random.uniform(-self.translate, self.translate) * h
+        data = (1, 0, -dx, 0, 1, -dy)
+        img  = img.transform(img.size,   Image.AFFINE, data, resample=Image.BILINEAR)
+        mask = mask.transform(mask.size, Image.AFFINE, data, resample=Image.NEAREST)
+        return img, mask
+
+
+class RandomContrast(object):
+    """Multiply all channel intensities by a uniform random gain (PIL image, before ToTensor)."""
+    def __init__(self, lo=0.99, hi=1.01):
+        self.lo, self.hi = lo, hi
+
+    def __call__(self, img):
+        factor = random.uniform(self.lo, self.hi)
+        arr = np.clip(np.array(img, dtype=np.float32) * factor, 0, 255).astype(np.uint8)
+        return Image.fromarray(arr)
+
+
+class RandomBrightness(object):
+    """Add an independent per-channel brightness offset in [-max_offset, +max_offset] pixel units."""
+    def __init__(self, max_offset=2.5):
+        self.max_offset = max_offset
+
+    def __call__(self, img):
+        arr = np.array(img, dtype=np.float32)
+        for c in range(arr.shape[2]):
+            arr[:, :, c] = np.clip(
+                arr[:, :, c] + random.uniform(-self.max_offset, self.max_offset), 0, 255
+            )
+        return Image.fromarray(arr.astype(np.uint8))
+
+
+class AddGaussianNoise(object):
+    """Add zero-mean Gaussian noise to a normalised tensor (after ToTensor + Normalize)."""
+    def __init__(self, std=0.02):
+        self.std = std
+
+    def __call__(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.std
