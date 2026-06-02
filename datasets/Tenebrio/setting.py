@@ -6,8 +6,10 @@ cfg_data = __C_Tenebrio
 # Path to the prepared Tenebrio data root, relative to where train.py is run
 # (the project root). Must contain `train/img`, `train/den`, `val/img`, `val/den`,
 # with density maps stored as .csv. Built by running scripts/split_tenebrio.py
-# from inside exp/data/, which creates the {train,val,test}/{img,den}/ tree.
-__C_Tenebrio.DATA_PATH = './exp/data/Tenebrio'
+# (creates the {train,val,test}/{img,den}/ tree) followed by
+# scripts/resize_splits_to_resolutions.py (creates resolution-variant subdirs).
+# Switch resolution variants by repointing this, e.g. './exp/data/Tenebrio/772x519'.
+__C_Tenebrio.DATA_PATH = './exp/data/Tenebrio/386x260'
 
 # ImageNet mean/std — correct for CSRNet's pretrained VGG16 frontend
 __C_Tenebrio.MEAN_STD = (

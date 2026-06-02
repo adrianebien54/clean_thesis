@@ -1,53 +1,45 @@
+import math
+import os
+
 import torchvision.transforms as standard_transforms
+from PIL import Image
 from torch.utils.data import DataLoader
+
 import misc.transforms as own_transforms
-from misc.transforms import (
-    Compose, RandomHorizontallyFlip, RandomVerticallyFlip,
-    RandomRotationJoint, RandomTranslationJoint,
-    RandomContrast, RandomBrightness, AddGaussianNoise,
-)
 from .Tenebrio import Tenebrio
 from .setting import cfg_data
-from config import cfg
+
+
+def _compute_train_size(data_path):
+    """80% of image (H, W), rounded UP to the next multiple of 8."""
+    img_dir = os.path.join(data_path, 'train', 'img')
+    sample = next(f for f in os.listdir(img_dir) if f.lower().endswith('.png'))
+    with Image.open(os.path.join(img_dir, sample)) as im:
+        w, h = im.size
+    ceil8 = lambda x: max(8, math.ceil(x * 0.8 / 8) * 8)
+    return (ceil8(h), ceil8(w))
 
 
 def loading_data():
     mean_std = cfg_data.MEAN_STD
-    log_para  = cfg_data.LOG_PARA
-    aug_set   = getattr(cfg, 'AUG_SET', 0)
+    log_para = cfg_data.LOG_PARA
 
-    # --- Joint spatial augmentations (applied to both image and density map) ---
-    if aug_set == 1:
-        train_main_transform = Compose([
-            RandomHorizontallyFlip(),
-            RandomVerticallyFlip(),
-            RandomRotationJoint(degrees=10),
-            RandomTranslationJoint(translate=0.02),
-        ])
-    elif aug_set == 2:
-        train_main_transform = Compose([
-            RandomHorizontallyFlip(),
-            RandomVerticallyFlip(),
-        ])
-    else:
-        train_main_transform = None
+    train_size = _compute_train_size(cfg_data.DATA_PATH)
+    print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={train_size} (H,W)')
 
-    # --- Image-only transforms (radiometric augmentations go here) ---
-    img_t = []
-    if aug_set == 1:
-        img_t += [RandomContrast(0.99, 1.01), RandomBrightness(2.5)]
-    img_t += [
+    train_main_transform = own_transforms.Compose([
+        own_transforms.RandomCrop(train_size),
+        own_transforms.RandomHorizontallyFlip(),
+    ])
+    val_main_transform = None
+
+    img_transform = standard_transforms.Compose([
         standard_transforms.ToTensor(),
         standard_transforms.Normalize(*mean_std),
-    ]
-    if aug_set == 1:
-        img_t.append(AddGaussianNoise(std=0.02))
-    img_transform = standard_transforms.Compose(img_t)
-
+    ])
     gt_transform = standard_transforms.Compose([
         own_transforms.LabelNormalize(log_para),
     ])
-
     restore_transform = standard_transforms.Compose([
         own_transforms.DeNormalize(*mean_std),
         standard_transforms.ToPILImage(),
@@ -62,24 +54,21 @@ def loading_data():
     train_loader = DataLoader(
         train_set,
         batch_size=cfg_data.TRAIN_BATCH_SIZE,
-        num_workers=4,
+        num_workers=8,
         shuffle=True,
-        drop_last=False,
+        drop_last=True,
     )
 
     val_set = Tenebrio(
         cfg_data.DATA_PATH + '/val', 'val',
-        main_transform=None,
-        img_transform=standard_transforms.Compose([
-            standard_transforms.ToTensor(),
-            standard_transforms.Normalize(*mean_std),
-        ]),
+        main_transform=val_main_transform,
+        img_transform=img_transform,
         gt_transform=gt_transform,
     )
     val_loader = DataLoader(
         val_set,
         batch_size=cfg_data.VAL_BATCH_SIZE,
-        num_workers=4,
+        num_workers=8,
         shuffle=False,
         drop_last=False,
     )
