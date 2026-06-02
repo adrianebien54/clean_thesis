@@ -23,6 +23,12 @@ class CrowdCounter(nn.Module):
             from .SCC_Model.Res101 import Res101 as net            
         elif model_name == 'Res101_SFCN':
             from .SCC_Model.Res101_SFCN import Res101_SFCN as net
+        elif model_name == 'MobileCount':
+            from .SCC_Model.MobileCount import MobileCount as net
+        elif model_name == 'MobileCountx1_25':
+            from .SCC_Model.MobileCountx1_25 import MobileCount as net
+        elif model_name == 'MobileCountx2':
+            from .SCC_Model.MobileCountx2 import MobileCount as net
 
         self.CCN = net()
         if len(gpus)>1:

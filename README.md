@@ -2,7 +2,17 @@
 
 # Python 3 dev version!
 
-An open-source PyTorch code for crowd counting
+An open-source PyTorch code for crowd counting.
+
+This repository merges the original C^3-Framework (CSRNet, MCNN, VGG, ResNet, SANet, CMTL, etc.) with the MobileCount efficient-architecture variants. All models share the same training pipeline — set `cfg.NET` in `config.py` to any of:
+
+`MCNN, AlexNet, VGG, VGG_DECODER, Res50, Res101, CSRNet, Res101_SFCN, SANet, CMTL, MobileCount, MobileCountx1_25, MobileCountx2`
+
+Efficiency benchmarking scripts (originally from MobileCount) are at the repo root:
+
+- `test_flops.py` — report FLOPs and parameter count for `cfg.NET`
+- `test_time.py` — measure inference time at 1920x1080 over batch sizes 1/2/4
+- `gen_density_map.py` — generate density maps from a trained checkpoint
 
 ---
 
