@@ -150,9 +150,9 @@ class Trainer():
                 self.timer['val time'].tic()
                 if self.data_mode in ['SHHA', 'SHHB', 'QNRF', 'UCF50']:
                     self.validate_V1()
-                elif self.data_mode is 'WE':
+                elif self.data_mode == 'WE':
                     self.validate_V2()
-                elif self.data_mode is 'GCC':
+                elif self.data_mode == 'GCC':
                     self.validate_V3()
                 self.timer['val time'].toc(average=False)
                 print( 'val time: {:.2f}s'.format(self.timer['val time'].diff) )
