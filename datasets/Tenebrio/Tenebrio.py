@@ -1,6 +1,7 @@
 import os
+
+import h5py
 import numpy as np
-import pandas as pd
 from PIL import Image, ImageOps
 from torch.utils import data
 
@@ -36,10 +37,9 @@ class Tenebrio(data.Dataset):
             img = img.convert('RGB')
         img_w, img_h = img.size
 
-        den = pd.read_csv(
-            os.path.join(self.gt_path, os.path.splitext(fname)[0] + '.csv'),
-            sep=',', header=None,
-        ).values.astype(np.float32)
+        den_path = os.path.join(self.gt_path, os.path.splitext(fname)[0] + '.h5')
+        with h5py.File(den_path, 'r') as f:
+            den = f['density'][:].astype(np.float32, copy=False)
         den_h, den_w = den.shape
 
         # Pad image to next multiple of 8 so encoder strides divide evenly.

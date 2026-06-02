@@ -29,7 +29,6 @@ def loading_data():
 
     train_main_transform = own_transforms.Compose([
         own_transforms.RandomCrop(train_size),
-        own_transforms.RandomHorizontallyFlip(),
     ])
     val_main_transform = None
 
