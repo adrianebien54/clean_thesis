@@ -17,9 +17,15 @@ __C_Tenebrio.MEAN_STD = (
     [0.229, 0.224, 0.225],
 )
 
-# Scale density values by 100 so MSE loss is large enough for effective gradient flow.
-# Density tensors will sum to count*100; MAE computation divides back by LOG_PARA.
-__C_Tenebrio.LOG_PARA = 100.
+# Scale density values so MSE loss is large enough for effective gradient flow.
+# LOG_PARA is auto-scaled per resolution in loading_data() so that LOG_PARA * raw_density
+# (and hence the target magnitude the network regresses) stays ~constant across resolution
+# variants — see scripts/sweep_logpara_variable.py, which fixed the high-res target-collapse
+# that pinned 1544x1038 MAE at ~11. LOG_PARA cancels out of the count (trainer divides it
+# back out), so this only affects gradient/loss scale, not the reported MAE/MSE.
+__C_Tenebrio.LOG_PARA_BASE = 100.            # value calibrated for the 386x260 variant
+__C_Tenebrio.LOG_PARA_BASE_AREA = 386 * 260  # area at which LOG_PARA == LOG_PARA_BASE
+__C_Tenebrio.LOG_PARA = 100.                 # runtime value; overwritten per-resolution by loading_data()
 
 __C_Tenebrio.RESUME_MODEL = ''
 

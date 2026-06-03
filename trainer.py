@@ -57,10 +57,8 @@ class Trainer():
         # self.validate_V3()
         for epoch in range(self.epoch,cfg.MAX_EPOCH):
             self.epoch = epoch
-            if epoch > cfg.LR_DECAY_START:
-                self.scheduler.step()
-                
-            # training    
+
+            # training
             self.timer['train time'].tic()
             self.train()
             self.timer['train time'].toc(average=False)
@@ -79,6 +77,10 @@ class Trainer():
                     self.validate_V3()
                 self.timer['val time'].toc(average=False)
                 print( 'val time: {:.2f}s'.format(self.timer['val time'].diff) )
+
+            # LR decay — stepped at end of epoch (after optimizer.step()) per PyTorch guidance
+            if epoch > cfg.LR_DECAY_START:
+                self.scheduler.step()
 
 
     def train(self): # training for all datasets

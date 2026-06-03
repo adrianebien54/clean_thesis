@@ -247,7 +247,7 @@ class MobileCount(nn.Module):
         x1 = self.dropout_clf(x1)
         out = self.clf_conv(x1)
 
-        out = F.upsample(out, size=size1, mode='bilinear')
+        out = F.interpolate(out, size=size1, mode='bilinear')
 
         return out
 

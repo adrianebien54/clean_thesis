@@ -20,12 +20,27 @@ def _compute_train_size(data_path):
     return (ceil8(h), ceil8(w))
 
 
+def _compute_log_para(data_path, base_log_para, base_area):
+    """LOG_PARA scaled by image area, so LOG_PARA*raw_density (the target magnitude the
+    network regresses) stays ~constant across resolution variants. Anchored on
+    (base_log_para, base_area). See scripts/sweep_logpara_variable.py."""
+    img_dir = os.path.join(data_path, 'train', 'img')
+    sample = next(f for f in os.listdir(img_dir) if f.lower().endswith('.png'))
+    with Image.open(os.path.join(img_dir, sample)) as im:
+        w, h = im.size
+    return base_log_para * (w * h) / base_area
+
+
 def loading_data():
     mean_std = cfg_data.MEAN_STD
+
+    cfg_data.LOG_PARA = _compute_log_para(
+        cfg_data.DATA_PATH, cfg_data.LOG_PARA_BASE, cfg_data.LOG_PARA_BASE_AREA)
     log_para = cfg_data.LOG_PARA
 
     train_size = _compute_train_size(cfg_data.DATA_PATH)
-    print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={train_size} (H,W)')
+    print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={train_size} (H,W)'
+          f'  LOG_PARA={log_para:.2f}')
 
     train_main_transform = own_transforms.Compose([
         own_transforms.RandomCrop(train_size),
