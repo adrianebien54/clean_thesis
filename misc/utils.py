@@ -57,20 +57,35 @@ def weights_normal_init(*models):
                     m.weight.data.normal_(0.0, dev)
 
 
-def logger(exp_path, exp_name, work_dir, exception, resume=False):
+def _format_effective_cfg(cfg, cfg_data=None):
+    """Dump the LIVE runtime cfg values (after any in-memory overrides), not the
+    static config.py source. Sweep scripts mutate config.cfg.* at runtime, so the
+    file source is misleading; this records what the run actually used."""
+    lines = ['# ===== EFFECTIVE RUNTIME CONFIG (logged at run start) =====',
+             '# Recorded: ' + time.strftime('%Y-%m-%d %H:%M:%S')]
+    lines.append('# --- cfg (config.py) ---')
+    for k in sorted(cfg.keys()):
+        lines.append(f'cfg.{k} = {cfg[k]!r}')
+    if cfg_data is not None:
+        lines.append('# --- cfg_data (dataset setting) ---')
+        for k in sorted(cfg_data.keys()):
+            lines.append(f'cfg_data.{k} = {cfg_data[k]!r}')
+    lines.append('# ==========================================================')
+    return '\n'.join(lines) + '\n\n\n\n'
+
+
+def logger(exp_path, exp_name, work_dir, exception, resume=False, cfg_data=None):
 
     from tensorboardX import SummaryWriter
-    
+    from config import cfg
+
     if not os.path.exists(exp_path):
         os.mkdir(exp_path)
     writer = SummaryWriter(exp_path+ '/' + exp_name)
     log_file = exp_path + '/' + exp_name + '/' + exp_name + '.txt'
-    
-    cfg_file = open('./config.py',"r")  
-    cfg_lines = cfg_file.readlines()
-    
+
     with open(log_file, 'a') as f:
-        f.write(''.join(cfg_lines) + '\n\n\n\n')
+        f.write(_format_effective_cfg(cfg, cfg_data))
 
     if not resume:
         copy_cur_env(work_dir, exp_path+ '/' + exp_name + '/code', exception)

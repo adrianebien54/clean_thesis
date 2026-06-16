@@ -1,0 +1,16 @@
+I have changed my mind in my approach of going ofat.
+I will just do a complete test of everything.
+
+so optimizer x learning rate x batch size. 
+
+you can just do 1 seed (3035), because it seems like the patterns are the same. 
+
+i have already done for batch size 6 and for both optimizers (adam and adamw):
+
+mobilecount at learning rate e-3 and e-4, i still want e-5 and e-6. 
+
+for csrnet i have done e-5, but i also want to do e-4, e-5 and e-6.
+
+do the amount of epochs untill the learning rate collapses because of the decay. 
+- also check if you did this for the other runs, they seemed to end at 800 epochs. 
+If they still could have gone, then continue them.

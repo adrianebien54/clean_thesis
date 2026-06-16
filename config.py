@@ -8,8 +8,8 @@ __C = edict()
 cfg = __C
 
 #------------------------------TRAIN------------------------
-__C.SEED = 3035 # random seed,  for reproduction
-__C.DATASET = 'SHHB' # dataset selection: GCC, SHHA, SHHB, UCF50, QNRF, WE, Mall, UCSD, Tenebrio
+__C.SEED = 3035 # random seed,  for reporduction
+__C.DATASET = 'SHHA' # dataset selection: SHHA, SHHB, UCF50, QNRF, WE
 
 if __C.DATASET == 'UCF50':# only for UCF50
 	from datasets.UCF50.setting import cfg_data
@@ -20,27 +20,19 @@ if __C.DATASET == 'GCC':# only for GCC
 	__C.VAL_MODE = cfg_data.VAL_MODE 
 
 
-__C.NET = 'Res101_SFCN' # net selection: MCNN, AlexNet, VGG, VGG_DECODER, Res50, Res101, CSRNet, Res101_SFCN, SANet, CMTL, MobileCount, MobileCountx1_25, MobileCountx2
+__C.NET = 'MobileCount' # net selection: MobileCount, MobileCountx1_25, MobileCountx2
 
 __C.PRE_GCC = False # use the pretrained model on GCC dataset
-__C.PRE_GCC_MODEL = 'path to model' # path to model
+__C.PRE_GCC_MODEL = './exp/04-06_16-19_GCC_CSRNet_0.0001_rd/all_ep_130_mae_34.9_mse_71.9.pth' # path to model
 
-__C.RESUME = False # contine training
-__C.RESUME_PATH = './exp/04-25_09-19_SHHB_VGG_1e-05/latest_state.pth' # 
-
-__C.GPU_ID = [0,1] # sigle gpu: [0], [1] ...; multi gpus: [0,1]
+__C.GPU_ID = [0] # sigle gpu: [0], [1] ...; multi gpus: [0,1]
 
 # learning rate settings
-__C.LR = 1e-5 # learning rate
+__C.LR = 1e-4 # learning rate
 __C.LR_DECAY = 0.995 # decay rate
 __C.LR_DECAY_START = -1 # when training epoch is more than it, the learning rate will be begin to decay
 __C.NUM_EPOCH_LR_DECAY = 1 # decay frequency
-__C.MAX_EPOCH = 200
-
-# multi-task learning weights, no use for single model, such as MCNN, VGG, VGG_DECODER, Res50, CSRNet, and so on
-
-__C.LAMBDA_1 = 1e-4# SANet:0.001 CMTL 0.0001
-
+__C.MAX_EPOCH = 500
 
 # print 
 __C.PRINT_FREQ = 10
@@ -62,7 +54,7 @@ __C.EXP_PATH = './exp' # the path of logs, checkpoints, and current codes
 
 
 #------------------------------VAL------------------------
-__C.VAL_DENSE_START = 50
+__C.VAL_DENSE_START = 1
 __C.VAL_FREQ = 10 # Before __C.VAL_DENSE_START epoches, the freq is set as __C.VAL_FREQ
 
 #------------------------------VIS------------------------

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch import optim
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 
 from models.CC import CrowdCounter
 from config import cfg
@@ -23,9 +23,27 @@ class Trainer():
 
         self.net_name = cfg.NET
         self.net = CrowdCounter(cfg.GPU_ID,self.net_name).cuda()
-        self.optimizer = optim.Adam(self.net.CCN.parameters(), lr=cfg.LR, weight_decay=1e-4)
-        # self.optimizer = optim.SGD(self.net.parameters(), cfg.LR, momentum=0.95,weight_decay=5e-4)
-        self.scheduler = StepLR(self.optimizer, step_size=cfg.NUM_EPOCH_LR_DECAY, gamma=cfg.LR_DECAY)          
+        opt_name = getattr(cfg, 'OPTIMIZER', 'Adam')
+        weight_decay = getattr(cfg, 'WEIGHT_DECAY', 1e-4)
+        if opt_name == 'Adam':
+            self.optimizer = optim.Adam(self.net.CCN.parameters(), lr=cfg.LR, weight_decay=weight_decay)
+        elif opt_name == 'AdamW':
+            self.optimizer = optim.AdamW(self.net.CCN.parameters(), lr=cfg.LR, weight_decay=weight_decay)
+        elif opt_name == 'SGD':
+            self.optimizer = optim.SGD(self.net.CCN.parameters(), cfg.LR,
+                                       momentum=getattr(cfg, 'MOMENTUM', 0.95), weight_decay=weight_decay)
+        else:
+            raise ValueError(f"Unknown OPTIMIZER {opt_name!r}")
+        sched_name = getattr(cfg, 'LR_SCHEDULE', 'step')
+        if sched_name == 'step':
+            self.scheduler = StepLR(self.optimizer, step_size=cfg.NUM_EPOCH_LR_DECAY, gamma=cfg.LR_DECAY)
+        elif sched_name == 'constant':
+            self.scheduler = StepLR(self.optimizer, step_size=1, gamma=1.0)  # no-op: holds LR
+        elif sched_name == 'cosine':
+            self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.MAX_EPOCH,
+                                               eta_min=getattr(cfg, 'LR_MIN', 0.0))
+        else:
+            raise ValueError(f"Unknown LR_SCHEDULE {sched_name!r}")
 
         self.train_record = {'best_mae': 1e20, 'best_mse':1e20, 'best_model_name': ''}
         self.timer = {'iter time' : Timer(),'train time' : Timer(),'val time' : Timer()} 
@@ -39,7 +57,7 @@ class Trainer():
         self.train_loader, self.val_loader, self.restore_transform = dataloader()
 
         if cfg.RESUME:
-            latest_state = torch.load(cfg.RESUME_PATH)
+            latest_state = torch.load(cfg.RESUME_PATH, weights_only=False)
             self.net.load_state_dict(latest_state['net'])
             self.optimizer.load_state_dict(latest_state['optimizer'])
             self.scheduler.load_state_dict(latest_state['scheduler'])
@@ -49,7 +67,7 @@ class Trainer():
             self.exp_path = latest_state['exp_path']
             self.exp_name = latest_state['exp_name']
 
-        self.writer, self.log_txt = logger(self.exp_path, self.exp_name, self.pwd, 'exp', resume=cfg.RESUME)
+        self.writer, self.log_txt = logger(self.exp_path, self.exp_name, self.pwd, 'exp', resume=cfg.RESUME, cfg_data=self.cfg_data)
 
 
     def forward(self):
