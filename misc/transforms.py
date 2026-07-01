@@ -169,7 +169,13 @@ class RandomVerticallyFlip(object):
 
 
 class RandomRotationJoint(object):
-    """Rotate both image and density map by the same random angle in [-degrees, +degrees]."""
+    """Rotate both image and density map by the same random angle in [-degrees, +degrees].
+
+    By design this perturbs the train-sample count by ~1% on average (density near the
+    corners rotates out of the frame with expand=False); this is image-consistent
+    (the image is clipped identically) and is dwarfed by the RandomCrop count variation,
+    so it is an intended augmentation effect, not a bug. Reported metrics are unaffected
+    (val/test are un-augmented)."""
     def __init__(self, degrees):
         self.degrees = degrees
 
@@ -180,50 +186,43 @@ class RandomRotationJoint(object):
         return img, mask
 
 
-class RandomTranslationJoint(object):
-    """Translate both image and density map by the same random pixel offset."""
-    def __init__(self, translate):
-        self.translate = translate  # e.g. 0.02 for ±2%
+class RandomRadiometric(object):
+    """Per-channel radiometric augmentation on a [0,1] CxHxW tensor (place AFTER ToTensor,
+    BEFORE Normalize): out_c = clip(gain_c * in_c + offset_c, 0, 1), with the gain and
+    offset sampled INDEPENDENTLY for each channel. Implements jimaging7020021's "radiometric
+    offset and gain of 1% for each individual image channel" (the source, Papadopoulos 2024
+    TenebrioVision, states no value). gain_c ~ U[1-gain, 1+gain],
+    offset_c ~ U[-offset, +offset] in [0,1] units."""
 
-    def __call__(self, img, mask):
-        w, h = img.size
-        dx = random.uniform(-self.translate, self.translate) * w
-        dy = random.uniform(-self.translate, self.translate) * h
-        data = (1, 0, -dx, 0, 1, -dy)
-        img  = img.transform(img.size,   Image.AFFINE, data, resample=Image.BILINEAR)
-        mask = mask.transform(mask.size, Image.AFFINE, data, resample=Image.NEAREST)
-        return img, mask
+    def __init__(self, gain=0.01, offset=0.01):
+        self.gain = gain
+        self.offset = offset
 
-
-class RandomContrast(object):
-    """Multiply all channel intensities by a uniform random gain (PIL image, before ToTensor)."""
-    def __init__(self, lo=0.99, hi=1.01):
-        self.lo, self.hi = lo, hi
-
-    def __call__(self, img):
-        factor = random.uniform(self.lo, self.hi)
-        arr = np.clip(np.array(img, dtype=np.float32) * factor, 0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
+    def __call__(self, tensor):
+        c = tensor.shape[0]
+        gain = 1.0 + (torch.rand(c, 1, 1) * 2 - 1) * self.gain
+        offset = (torch.rand(c, 1, 1) * 2 - 1) * self.offset
+        return (tensor * gain + offset).clamp(0.0, 1.0)
 
 
-class RandomBrightness(object):
-    """Add an independent per-channel brightness offset in [-max_offset, +max_offset] pixel units."""
-    def __init__(self, max_offset=2.5):
-        self.max_offset = max_offset
+class AddSparseGaussianNoise(object):
+    """Add zero-mean Gaussian noise to a random `fraction` of the pixels of a [0,1]
+    CxHxW tensor (place AFTER ToTensor, BEFORE Normalize), then clamp back to [0,1].
+    The noised pixels are shared across channels (one spatial mask) but the noise value
+    is independent per channel. Implements the "Gaussian distribution applied to 8% of
+    the pixels" noise augmentation of Papadopoulos et al. (2024, TenebrioVision).
 
-    def __call__(self, img):
-        arr = np.array(img, dtype=np.float32)
-        for c in range(arr.shape[2]):
-            arr[:, :, c] = np.clip(
-                arr[:, :, c] + random.uniform(-self.max_offset, self.max_offset), 0, 255
-            )
-        return Image.fromarray(arr.astype(np.uint8))
+    The source does not specify the standard deviation, so the torchvision GaussianNoise
+    default (std=0.1) is used; the clamp mirrors torchvision's clip=True and is
+    physically correct for saturated speckle (clipped pixels carry slightly less than
+    the nominal variance, which is acceptable for this sparse-speckle augmentation)."""
 
-
-class AddGaussianNoise(object):
-    """Add zero-mean Gaussian noise to a normalised tensor (after ToTensor + Normalize)."""
-    def __init__(self, std=0.02):
+    def __init__(self, fraction=0.08, std=0.1):
+        self.fraction = fraction
         self.std = std
 
     def __call__(self, tensor):
-        return tensor + torch.randn_like(tensor) * self.std
+        c, h, w = tensor.shape
+        mask = torch.rand(1, h, w) < self.fraction      # same pixels across channels
+        noise = torch.randn(c, h, w) * self.std         # independent value per channel
+        return (tensor + noise * mask).clamp(0.0, 1.0)

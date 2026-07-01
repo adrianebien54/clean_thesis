@@ -31,3 +31,20 @@ __C_Tenebrio.RESUME_MODEL = ''
 
 __C_Tenebrio.TRAIN_BATCH_SIZE = 6
 __C_Tenebrio.VAL_BATCH_SIZE = 1
+
+# ---- Data augmentation (Papadopoulos et al. 2024, TenebrioVision) -------------------
+# Two paradigms from the source, plus an off switch. Built in loading_data():
+#   'none'     : RandomCrop only (train-size crop; no other augmentation)
+#   'basic'    : + horizontal & vertical flips (p=0.5 each)
+#   'extended' : basic + random rotation + per-channel radiometric offset/gain
+#                + sparse Gaussian noise
+# Zoom (in the source's extended set) is INTENTIONALLY OMITTED: it rescales the larvae,
+# injecting object-scale jitter — and object scale is the variable the resolution study
+# isolates. Magnitudes the source leaves unspecified are taken from jimaging7020021
+# (rotation, per-channel radiometric ±1%) or the torchvision default (noise std); the 8%
+# noise fraction is from the source. Geometric augs act jointly on image + density map.
+__C_Tenebrio.AUG = 'none'
+__C_Tenebrio.AUG_ROTATION = 10.0        # ± degrees (jimaging7020021)
+__C_Tenebrio.AUG_RADIOMETRIC = 0.01     # per-channel offset & gain, ±1% (jimaging7020021)
+__C_Tenebrio.AUG_NOISE_FRACTION = 0.08  # fraction of pixels noised (TenebrioVision)
+__C_Tenebrio.AUG_NOISE_STD = 0.1        # torchvision GaussianNoise default (source silent)

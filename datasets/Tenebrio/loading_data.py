@@ -39,15 +39,38 @@ def loading_data():
     log_para = cfg_data.LOG_PARA
 
     train_size = _compute_train_size(cfg_data.DATA_PATH)
+    aug = getattr(cfg_data, 'AUG', 'none')
     print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={train_size} (H,W)'
-          f'  LOG_PARA={log_para:.2f}')
+          f'  LOG_PARA={log_para:.2f}  AUG={aug}')
 
-    train_main_transform = own_transforms.Compose([
-        own_transforms.RandomCrop(train_size),
-    ])
+    # Geometric augmentations act jointly on image + density map (so the count is
+    # preserved) and run only on the train split, before the train-size crop.
+    geo_transforms = []
+    if aug in ('basic', 'extended'):
+        geo_transforms += [
+            own_transforms.RandomHorizontallyFlip(),
+            own_transforms.RandomVerticallyFlip(),
+        ]
+    if aug == 'extended':
+        geo_transforms.append(own_transforms.RandomRotationJoint(cfg_data.AUG_ROTATION))
+    geo_transforms.append(own_transforms.RandomCrop(train_size))
+    train_main_transform = own_transforms.Compose(geo_transforms)
     val_main_transform = None
 
-    img_transform = standard_transforms.Compose([
+    # Photometric augmentations touch the image only (density map unchanged), train only;
+    # they run in [0,1] space between ToTensor and Normalize.
+    photometric = []
+    if aug == 'extended':
+        photometric = [
+            own_transforms.RandomRadiometric(cfg_data.AUG_RADIOMETRIC, cfg_data.AUG_RADIOMETRIC),
+            own_transforms.AddSparseGaussianNoise(cfg_data.AUG_NOISE_FRACTION, cfg_data.AUG_NOISE_STD),
+        ]
+    train_img_transform = standard_transforms.Compose(
+        [standard_transforms.ToTensor()]
+        + photometric
+        + [standard_transforms.Normalize(*mean_std)]
+    )
+    val_img_transform = standard_transforms.Compose([
         standard_transforms.ToTensor(),
         standard_transforms.Normalize(*mean_std),
     ])
@@ -62,7 +85,7 @@ def loading_data():
     train_set = Tenebrio(
         cfg_data.DATA_PATH + '/train', 'train',
         main_transform=train_main_transform,
-        img_transform=img_transform,
+        img_transform=train_img_transform,
         gt_transform=gt_transform,
     )
     train_loader = DataLoader(
@@ -76,7 +99,7 @@ def loading_data():
     val_set = Tenebrio(
         cfg_data.DATA_PATH + '/val', 'val',
         main_transform=val_main_transform,
-        img_transform=img_transform,
+        img_transform=val_img_transform,
         gt_transform=gt_transform,
     )
     val_loader = DataLoader(
