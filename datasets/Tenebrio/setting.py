@@ -33,7 +33,8 @@ __C_Tenebrio.TRAIN_BATCH_SIZE = 6
 __C_Tenebrio.VAL_BATCH_SIZE = 1
 
 # ---- Data augmentation (Papadopoulos et al. 2024, TenebrioVision) -------------------
-# Two paradigms from the source, plus an off switch. Built in loading_data():
+# Two paradigms from the source, plus two off switches. Built in loading_data():
+#   'raw'      : nothing at all — train sees the full (padded) image, like val
 #   'none'     : RandomCrop only (train-size crop; no other augmentation)
 #   'basic'    : + horizontal & vertical flips (p=0.5 each)
 #   'extended' : basic + random rotation + per-channel radiometric offset/gain

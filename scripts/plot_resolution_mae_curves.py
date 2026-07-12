@@ -38,7 +38,7 @@ NETS = [("CSRNet", "tab:blue"), ("MobileCount", "tab:orange")]
 
 BESTCOMBO = "exp/bestcombo_resolutions_06-24_11-49/bestcombo_resolutions_results.json"
 CSRNET_386 = "exp/batchsize_sweep_logpara_06-21_22-41/batchsize_logpara_results.json"
-MOBILE_386 = ("exp/aa_final/mobilecount_logpara2550_anchor772x519_06-17_14-26/"
+MOBILE_386 = ("exp/360p_lr_optim_grid/mobilecount_logpara2550_anchor772x519_06-17_14-26/"
               "mobilecount_logpara2550_results.json")
 
 

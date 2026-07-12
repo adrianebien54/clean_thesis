@@ -1,0 +1,244 @@
+% =====================================================================
+% RESULTS & DISCUSSION — revised 2026-07-08. Structure follows your
+% draft (\subsection{Cross-Resolution Comparison} + \subsection{Discussion}).
+% Every number verified against exp/combined_resolution/{testset_table.md,
+% resolution_table.md, inference_memory_table.md} and the per-epoch
+% metrics in exp/bestcombo_resolutions_06-24_11-49 (SOURCE comments inline).
+% Cross-refs used from the main file: tab:final_configs,
+% eq:logpara_scaling, sec:eval_metrics, sec:tuning_protocol, sec:intro.
+%
+% STILL TO DO (nothing blocks the text except #1):
+%  [ ] 1. REDO fig:mae_vs_resolution — image.png is a screenshot with
+%         wrong values. Regenerate a log-log test-MAE-vs-resolution
+%         figure from exp/combined_resolution/testset_table.md.
+%  [ ] 2. Cite the NVIDIA Jetson Nano datasheet where marked and
+%         double-check the specs against it.
+%  [ ] 3. OPTIONAL: FLOPs per network x resolution (ptflops/thop, no
+%         training) if you want FLOPs numbers instead of future work.
+%  [ ] 4. Pick the final learning-curves file (this draft uses
+%         mae_curves_by_resolution_thesis_2x3.png).
+% =====================================================================
+
+\subsection{Cross-Resolution Comparison}
+\label{sec:results_resolution}
+
+The tuned configurations (Table~\ref{tab:final_configs}) were
+retrained from scratch at each of the six resolution variants, with
+the density scale $k$ adjusted per resolution by
+Eq.~\eqref{eq:logpara_scaling} and every other hyperparameter frozen
+at its $386\times260$ optimum. Table~\ref{tab:resolution_test} reports
+the results; Figure~\ref{fig:mae_vs_resolution} plots the trend and
+Figure~\ref{fig:res_learning_curves} the underlying learning curves.
+
+\begin{table}[t]
+    \centering
+    \caption{Counting error across input resolutions, in larvae per
+    image (metrics as defined in Section~\ref{sec:eval_metrics}). Each
+    cell's best-validation-MAE checkpoint is evaluated exactly once on
+    the test split ($112$ images). The asterisk marks the tuning
+    resolution; bold marks the best value per column. MobileCount's
+    test differences across the three largest resolutions are within
+    run-to-run noise (see text).}
+    \label{tab:resolution_test}
+    \small
+    \begin{tabular}{l rrr rrr}
+        \toprule
+        &\multicolumn{3}{c}{CSRNet}&\multicolumn{3}{c}{MobileCount}\\
+        \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+        Resolution & val MAE & test MAE & test MSE & val MAE & test MAE & test MSE \\
+        \midrule
+        $49\times33$     & $5.96$  & $5.46$  & $6.22$  & $2.68$  & $2.92$  & $3.96$ \\
+        $97\times65$     & $1.03$  & $1.36$  & $2.40$  & $1.91$  & $2.00$  & $2.95$ \\
+        $193\times130$   & $0.534$ & $0.885$ & $1.83$  & $0.861$ & $0.895$ & $1.25$ \\
+        $386\times260^*$ & $0.288$ & $0.470$ & $0.973$ & $\mathbf{0.385}$ & $0.433$ & $0.653$ \\
+        $772\times519$   & $0.193$ & $0.289$ & $0.683$ & $0.434$ & $0.471$ & $0.618$ \\
+        $1544\times1038$ & $\mathbf{0.183}$ & $\mathbf{0.233}$ & $\mathbf{0.479}$ & $0.428$ & $\mathbf{0.361}$ & $\mathbf{0.521}$ \\
+        \bottomrule
+    \end{tabular}
+    % SOURCE: exp/combined_resolution/testset_table.md — all values
+    % verified 2026-07-08.
+\end{table}
+
+Both networks tolerate downscaling gracefully at first: from the
+maximum down to $193\times130$ — a $64$-fold reduction in pixel count
+— the test MAE stays below $0.9$ for both. Below that the degradation
+is steep. At $49\times33$ the test MAE reaches $5.46$ (CSRNet) and
+$2.92$ (MobileCount); expressed relative to the mean count of $47.9$
+larvae per image, the best models miscount by ${\approx}0.5$--$1\%$,
+whereas the smallest variant is off by $6$--$11\%$. Even the collapsed
+variants remain a factor of $4$--$8$ better than the trivial
+constant-prediction floor of ${\approx}23$ identified in
+Section~\ref{sec:tuning_protocol}, but their relative error is an
+order of magnitude above every other operating point. Notably, the
+architecture ranking inverts at the bottom of the range: at
+$49\times33$ MobileCount is nearly twice as accurate as CSRNet,
+plausibly because CSRNet's $H/8$ output resolution reduces a
+$49\times33$ input to a density map of roughly $6\times4$ cells.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{image.png}
+    % TODO(#1): REDO — current file is a screenshot with wrong values.
+    \caption{Test MAE against input resolution for both networks
+    (log--log axes). The asterisked point marks the tuning resolution.}
+    % TODO: re-check caption (axes/scale) once the figure is redone.
+    \label{fig:mae_vs_resolution}
+\end{figure}
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\linewidth]{images/mae_curves_by_resolution_thesis_2x3.png}
+    \caption{Validation MAE over training for the tuned configurations
+    at all six resolution variants. Curves are truncated at epoch
+    $1200$ for legibility; no run changes materially in the final
+    $300$ epochs.}
+    \label{fig:res_learning_curves}
+\end{figure*}
+
+\paragraph{CSRNet improves monotonically with resolution,}
+reaching a test MAE of $0.233$ at $1544\times1038$ — the best result
+in this thesis. The final doubling, however, buys only
+$0.289\rightarrow0.233$ test MAE at roughly triple the training cost
+(${\approx}10$\,h $\rightarrow$ ${\approx}29$\,h), placing the
+accuracy--compute knee at $772\times519$.
+% SOURCE: duration_sec 36,615 s / 105,157 s in
+% bestcombo_resolutions_results.json (verified 2026-07-08).
+
+\paragraph{MobileCount saturates at $386\times260$.}
+MobileCount is non-monotonic: its validation optimum lies at the
+tuning resolution ($0.385$), and the two larger variants are no better
+($0.434$ and $0.428$); the test MAE fluctuates between $0.361$ and
+$0.471$ across the three largest resolutions, differences within
+plausible run-to-run variation (see the limitations in
+Section~\ref{sec:discussion}). The learning curves
+(Figure~\ref{fig:res_learning_curves}) reveal a marked difference in
+training behaviour: at the two largest resolutions MobileCount reaches
+its best checkpoint within the first ${\sim}250$ epochs and spends the
+remainder of the budget at a validation MAE $3.7$--$3.8\times$ worse,
+whereas CSRNet stays within ${\sim}1.3\times$ of its optimum to the
+end. The interpretation of this behaviour is taken up in
+Section~\ref{sec:discussion}.
+% SOURCE: best epochs 105 (772x519) / 224 (1544x1038); ep>1200 median
+% val MAE 1.60 vs best 0.43 for MobileCount; CSRNet 0.24 vs 0.19/0.18.
+
+% ---------------------------------------------------------------------
+
+\subsection{Discussion}
+\label{sec:discussion}
+
+\paragraph{MobileCount's saturation is capacity-limited overfitting.}
+The learning curves suggest a mechanism for the saturation observed in
+Section~\ref{sec:results_resolution}. At the two largest resolutions
+MobileCount extracts what its $3.4$\,M parameters can represent from
+the higher-resolution input within the first few hundred epochs; the
+${\sim}1{,}300$ epochs that follow are spent memorising the $840$
+training images rather than learning generalisable features, and its
+validation MAE settles at $3.7$--$3.8\times$ its optimum.
+Best-checkpoint selection shields the reported numbers from the
+overfitting itself, but it cannot manufacture accuracy the network
+never reaches. CSRNet — with $4.8\times$ the parameters and an
+ImageNet-pretrained frontend — shows no such collapse: it remains
+within ${\sim}1.3\times$ of its optimum throughout and keeps
+converting additional resolution into accuracy.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{images/accuracy vs memory.png}
+    \caption{Accuracy--memory frontier: test MAE against peak
+    inference memory (batch-$1$, CUDA allocated peak) for all twelve
+    network~$\times$~resolution cells. Labels give the input
+    resolution.}
+    % TODO: re-check caption against the final figure.
+    \label{fig:acc_vs_mem}
+\end{figure}
+
+\paragraph{The accuracy--memory frontier crosses over at
+${\sim}0.36$ MAE.} The shape of the frontier
+(Figure~\ref{fig:acc_vs_mem}) follows from what dominates the
+footprint. At small inputs it is the weights: the peaks sit nearly
+flat at ${\approx}150$\,MB for CSRNet and ${\approx}27$\,MB for
+MobileCount, tracking their parameter memory ($127.6$\,MB for
+$16.3$\,M parameters vs.\ $26.3$\,MB for $3.4$\,M); from
+$386\times260$ upwards, activations take over and the footprint grows
+with pixel count. Across the frontier, MobileCount offers the better
+accuracy-per-megabyte everywhere down to a test MAE of $0.361$
+($217$\,MB at $1544\times1038$). At the $386\times260$ operating point
+it strictly dominates CSRNet: better accuracy ($0.433$ vs.\ $0.470$
+test MAE, ${\approx}0.9\%$ of the mean count) at roughly one-sixth the
+memory ($39$\,MB vs.\ $229$\,MB). Below ${\sim}0.36$ MAE the frontier
+belongs to CSRNet alone — $0.289$ at $524$\,MB and $0.233$ at
+$1713$\,MB — and the step onto its branch is expensive: CSRNet's best
+point costs ${\approx}44\times$ the memory of MobileCount's
+$386\times260$ operating point (${\approx}8\times$ MobileCount at the
+same resolution) and ${\approx}29\times$ the training time
+(${\approx}29$\,h vs.\ ${\approx}1$\,h).
+% SOURCE: exp/combined_resolution/inference_memory_table.md; weights
+% 127.6/26.3 MB, params 16.26M/3.40M. 1713/39=44, 1713/217=7.9.
+
+\paragraph{Implications for edge deployment.}
+The intended deployment class makes the crossover concrete. An
+embedded module such as the NVIDIA Jetson Nano provides a $128$-core
+Maxwell GPU and $4$\,GB of LPDDR4 \emph{shared} between CPU and GPU,
+of which the operating system and runtime consume a substantial
+fraction.
+% TODO(#2): cite the NVIDIA Jetson Nano datasheet and verify specs.
+MobileCount's $39$\,MB peak at $386\times260$ is negligible on such a
+device, whereas CSRNet's $524$\,MB at $772\times519$ is uncomfortable
+and its $1713$\,MB at $1544\times1038$ is marginal at best. This
+resolves the question posed in Section~\ref{sec:intro}: the ranking of
+the two strategies is not fixed but conditional on the accuracy
+requirement. If a counting error of ${\approx}1\%$ of the mean count
+suffices, the lightweight model at $386\times260$ is the clear choice
+for edge deployment; only when sub-$0.36$ MAE is required does the
+heavy model at high resolution justify its footprint — and then likely
+not on this device class at all.
+
+\paragraph{Limitations.}
+All results rest on a single random seed ($3035$). Three-seed
+replicates of representative configurations, run during tuning, put
+the across-seed validation spread at the tuning resolution at
+$\pm0.007$ (CSRNet) to $\pm0.055$ (MobileCount) MAE; spreads at other
+resolutions and on the test split were not measured, a deliberate
+economy. The differences among MobileCount's three largest resolutions
+are of this order, so only the qualitative shapes — CSRNet's monotone
+improvement, MobileCount's saturation — should be considered robust.
+% NOTE: the three-seed replicate numbers aren't stated anywhere in the
+% main file anymore; consider adding a sentence to the tuning protocol.
+% SOURCE: exp/optimizer_seed_sweep_* — CSRNet AdamW ±0.007,
+% MobileCount ±0.055.
+Hyperparameters were tuned at $386\times260$ only and reused at all
+resolutions; a per-resolution tuning could shift individual numbers,
+though at prohibitive cost. In particular, MobileCount's saturation is
+confounded with the choice of tuning resolution — its hyperparameters
+were selected at the very resolution where it peaks — although CSRNet,
+tuned under the same handicap, improves at every resolution
+regardless. Relatedly, the batch size was tuned conditionally on the
+optimiser~$\times$~learning-rate optimum rather than as a joint grid,
+so interactions along that axis cannot be fully excluded. The two
+architectures also differ in more than size: initialisation
+(ImageNet-pretrained frontend vs.\ training from scratch),
+normalisation (none vs.\ batch normalisation), and design (a dilated
+single-branch backend vs.\ an encoder--decoder), so their divergent
+scaling behaviour cannot be attributed to capacity alone. The memory
+figures are CUDA allocated peaks measured on a single GPU model; the
+allocator's reserved pool is somewhat higher, and other hardware or
+runtimes will shift the absolute values, though not the ranking
+between the architectures. Finally, all experiments concern a single
+dataset from one imaging setup, and the evaluation partition is drawn
+from the same acquisition as the training data: the reported errors
+characterise the curated setup, not production-farm imagery, and
+transferability to other larval densities, camera geometries, or
+species is untested.
+
+\paragraph{Future work.}
+Three extensions follow directly. First, the compute side of the
+trade-off could be characterised alongside memory by measuring FLOPs
+and, more importantly, actual latency per network and resolution.
+% TODO(#3, optional): ptflops/thop pass if you want FLOPs numbers now.
+Second, the deployment argument should be closed by running the
+selected configuration on the target hardware itself — a Jetson-class
+module — measuring end-to-end latency and peak memory, and assessing
+quantisation. Third, the setup should be validated under realistic
+domain shift: images from operating farms, where robustness-oriented
+augmentation beyond the patch-based scheme used here may earn its
+keep.

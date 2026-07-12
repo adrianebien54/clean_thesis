@@ -38,23 +38,32 @@ def loading_data():
         cfg_data.DATA_PATH, cfg_data.LOG_PARA_BASE, cfg_data.LOG_PARA_BASE_AREA)
     log_para = cfg_data.LOG_PARA
 
-    train_size = _compute_train_size(cfg_data.DATA_PATH)
     aug = getattr(cfg_data, 'AUG', 'none')
-    print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={train_size} (H,W)'
+    if aug not in ('raw', 'none', 'basic', 'extended'):
+        raise ValueError(f"cfg_data.AUG={aug!r}; expected 'raw', 'none', 'basic' or 'extended'")
+
+    train_size = None if aug == 'raw' else _compute_train_size(cfg_data.DATA_PATH)
+    size_info = 'full-image' if aug == 'raw' else f'{train_size} (H,W)'
+    print(f'[Tenebrio] DATA_PATH={cfg_data.DATA_PATH}  TRAIN_SIZE={size_info}'
           f'  LOG_PARA={log_para:.2f}  AUG={aug}')
 
     # Geometric augmentations act jointly on image + density map (so the count is
     # preserved) and run only on the train split, before the train-size crop.
-    geo_transforms = []
-    if aug in ('basic', 'extended'):
-        geo_transforms += [
-            own_transforms.RandomHorizontallyFlip(),
-            own_transforms.RandomVerticallyFlip(),
-        ]
-    if aug == 'extended':
-        geo_transforms.append(own_transforms.RandomRotationJoint(cfg_data.AUG_ROTATION))
-    geo_transforms.append(own_transforms.RandomCrop(train_size))
-    train_main_transform = own_transforms.Compose(geo_transforms)
+    # 'raw' skips the geometric stage entirely: train sees the full (padded) image
+    # every epoch, exactly like val.
+    if aug == 'raw':
+        train_main_transform = None
+    else:
+        geo_transforms = []
+        if aug in ('basic', 'extended'):
+            geo_transforms += [
+                own_transforms.RandomHorizontallyFlip(),
+                own_transforms.RandomVerticallyFlip(),
+            ]
+        if aug == 'extended':
+            geo_transforms.append(own_transforms.RandomRotationJoint(cfg_data.AUG_ROTATION))
+        geo_transforms.append(own_transforms.RandomCrop(train_size))
+        train_main_transform = own_transforms.Compose(geo_transforms)
     val_main_transform = None
 
     # Photometric augmentations touch the image only (density map unchanged), train only;
