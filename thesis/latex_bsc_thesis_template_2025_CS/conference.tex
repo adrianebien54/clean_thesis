@@ -1,0 +1,785 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage[T1]{fontenc}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{cleveref}   % keep this LAST
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Model Capacity or Input Resolution? Density-Based Counting of
+\textit{Tenebrio molitor} Larvae under Edge Memory Constraints\\
+\thanks{This thesis was prepared in partial fulfilment of the requirements for the Degree of Bachelor of Computer Science, Maastricht University. Supervisor: Petra Bosilj}
+}
+
+\author{\IEEEauthorblockN{Adriane Bien}
+\IEEEauthorblockA{\textit{Department of Advanced Computing Sciences} \\
+\textit{Faculty of Science and Engineering}\\
+\textit{Maastricht University}\\
+Maastricht, The Netherlands}
+}
+
+\maketitle
+
+\begin{abstract}
+Commercial insect farming depends on automated monitoring of rearing trays,
+but existing machine-vision work for this task relies on detection and
+segmentation, which degrade when larvae are densely packed and occluded.
+Density-based crowd counting suits such scenes yet remains unexplored in insect
+agriculture. This thesis applies it to Tenebrio molitor larvae under edge memory
+constraints, asking how a fixed budget should be divided between model capacity
+and input resolution. A heavyweight network, CSRNet, and a lightweight one,
+MobileCount, are tuned independently on the TenebrioVision dataset and evaluated
+across a six-step resolution ladder, with peak inference memory recorded for
+each of the twelve resulting configurations. Both count to within one larva at a
+sixteenth of the native resolution. Peak memory is weight-dominated at the three
+coarsest steps and activation-dominated above them, so downscaling stops paying
+well before accuracy stops improving, and MobileCount holds every point on the
+accuracy-memory frontier except its high-accuracy corner. On a Jetson Nano all
+twelve configurations fit, so the required accuracy rather than the footprint
+sets the operating point.
+\end{abstract}
+
+\begin{IEEEkeywords}
+crowd counting, density estimation, edge computing, insect farming,
+precision livestock farming, convolutional neural networks
+\end{IEEEkeywords}
+
+\section{Introduction}
+To meet the growing global demand for protein, insect farming has emerged as a
+promising alternative to conventional livestock production~\cite{vanhuis2013}.
+\textit{Tenebrio molitor}, the yellow mealworm, is one of the few insect species
+approved for human consumption in Europe~\cite{eu2021tenebrio}. To be
+commercially viable, however, production must scale up significantly---a challenge
+that hinges directly on automation~\cite{rumpold2013}.
+
+Automated mealworm farming requires continuous monitoring of the rearing plates
+to inform decisions about feeding, harvesting, and environmental control. Prior work has explored machine vision for this purpose, but most of it relies on object detection and instance segmentation~\cite{majewski2022multipurpose}. Papadopoulos et al.~\cite{Papadopoulos2024TenebrioVision} found that these
+paradigms degrade on real-farm images of \textit{T.\ molitor} rearing trays, where larvae are densely packed and heavily occluded. Crowd counting via density estimation offers a far more suitable framework for these
+conditions~\cite{Sindagi2017ASO}, yet it remains entirely unexplored in insect
+agriculture.
+
+The primary driver for automation is economic: reducing operational costs and
+maximising production efficiency~\cite{rumpold2013}. Because the industry lacks
+standardization~\cite{NAWOYA2024108503}, farms have adopted a diverse range of
+technological solutions~\cite{CoRoSect2022AdvancedArchitecture,
+kroncke2020automation}. One compelling approach is edge AI, which is
+particularly attractive for cost-sensitive operations because it runs inference
+locally on low-cost embedded devices~\cite{angulo2025realtimecricketsortingsex}.
+This thesis therefore investigates how crowd-counting models can be deployed
+within the strict memory constraints of edge hardware, specifically the Jetson Nano. 
+
+Memory consumption during inference is governed primarily by two factors:
+larger architectures need more memory for their parameters, and
+higher-resolution inputs enlarge the intermediate feature maps held during the
+forward pass~\cite{Chao2019HarDNet}. Reducing the footprint therefore comes down
+to shrinking the model or shrinking the input.
+
+This thesis first establishes that density-based counting is viable in this
+setting, then asks:
+
+\begin{quote}
+Under the memory constraints of edge hardware, how should a fixed memory budget
+for density-based mealworm counting be allocated between model capacity and
+input resolution, and which resulting configuration best serves automated
+rearing-tray monitoring?
+\end{quote}
+
+\noindent This question is decomposed into four sub-questions:
+
+\begin{itemize}\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}
+  \item \textbf{RQ1:} How does input resolution affect the counting accuracy of
+    differently sized crowd-counting models?
+  \item \textbf{RQ2:} How does peak inference memory scale with input resolution
+    and with the size of the backbone?
+  \item \textbf{RQ3:} Which architecture--resolution combinations are
+    Pareto-optimal on the accuracy--memory plane?
+  \item \textbf{RQ4:} Which configurations fit the Jetson Nano's budget while
+    meeting the accuracy demanded by operational insect rearing?
+\end{itemize}
+
+\section{Related Work}
+\subsection{Crowd Counting Approaches}
+
+Crowd counting methods can be broadly categorised into three main approaches~\cite{gao2020crowdcountingsurvey, li2018csrnet}: detection-based~\cite{dalal2005histograms, felzenszwalb2010object}, regression-based~\cite{chan2008privacy, idrees2013multi}, and density estimation-based~\cite{lempitsky2010learning} methods.
+
+The earliest approaches in the field were detection-based, which produce a population estimate by aggregating individual bounding-box predictions. Typical examples include pedestrian detectors based on hand-crafted Histogram of Oriented Gradients (HOG) features~\cite{dalal2005histograms} and part-based models that detect individual body parts to better handle partial occlusion~\cite{felzenszwalb2010object}. These methods struggle under severe occlusion and high object density~\cite{gao2020crowdcountingsurvey}.
+
+Regression-based methods were developed to address this by computing object counts directly from image features, bypassing the need for explicit localization~\cite{chan2008privacy, idrees2013multi, gao2020crowdcountingsurvey}. While this shift makes them significantly more robust to heavy occlusion, they sacrifice spatial information entirely, leaving no insight into how individuals are actually distributed across a scene~\cite{gao2020crowdcountingsurvey}.
+
+The most widely used crowd-counting models today rely on density estimation~\cite{lempitsky2010learning, gao2020crowdcountingsurvey}. Rather than localising individuals explicitly, this approach learns to map an input image to a continuous density map whose integral over any region gives the count within it, and over the whole map the total. Because the map records where mass is concentrated, it retains the spatial information that regression discards, and such models are typically trained by regressing the predicted map against a generated ground-truth one~\cite{wang2020mobilecount, li2018csrnet, gao2020crowdcountingsurvey}.
+
+\subsection{CNN-Based Density Estimation}
+
+Convolutional Neural Networks (CNNs) learn hierarchical feature representations directly from raw pixel data rather than relying on hand-crafted features and shallow regressors~\cite{krizhevsky2012imagenet}, which buys far greater robustness to occlusion, lighting variation and background clutter and has made them the de facto standard for density estimation~\cite{gao2020crowdcountingsurvey, li2018csrnet}.
+
+Early approaches used shallow, single-branch networks of standard convolutional and fully connected layers that regress a count or coarse density map directly~\cite{fu2015fast, wang2015deep}, but these struggled with the extreme scale variation inherent to crowded scenes~\cite{Zhang_2016_CVPR, gao2020crowdcountingsurvey}. That limitation motivated the development of multi-column architectures such as the Multi-column Convolutional Neural Network (MCNN), which runs parallel network branches with different receptive-field sizes to capture image features at multiple scales simultaneously~\cite{Zhang_2016_CVPR}.
+
+The field has since largely shifted back toward single-column designs~\cite{gao2020crowdcountingsurvey}---networks with a single feature-extraction path, as in the early basic CNNs, but now substantially deeper and built on pretrained classification backbones rather than shallow stacks of plain layers~\cite{li2018csrnet, gao2020crowdcountingsurvey}. This design has become one of the most widely adopted frameworks in crowd counting~\cite{gao2020crowdcountingsurvey}; the Congested Scene Recognition Network (CSRNet)~\cite{li2018csrnet} served as a pivotal model in this transition and consequently remains a standard baseline for benchmarking newer methods, particularly in highly dense scenes.
+
+\subsection{Lightweight Networks}
+Beyond core architectural designs, lightweight models have recently emerged as a crucial area of research, driven by the need for resource-constrained deployment on edge devices~\cite{wang2020mobilecount}. The primary objective here is to minimise computational overhead and parameter counts without incurring a significant penalty to overall counting accuracy~\cite{gao2020crowdcountingsurvey, wang2020mobilecount}.
+
+A prominent example of this in density-based crowd counting is MobileCount~\cite{wang2020mobilecount}, an encoder-decoder network built on top of a lightweight MobileNetV2 backbone~\cite{sandler2018mobilenetv2}. Compared directly with CSRNet, MobileCount reduces the overall model footprint by roughly 80\%---requiring only 3.40 million parameters versus CSRNet's 16.26 million---while requiring 52 times fewer floating-point operations (FLOPs) and exhibiting only a minor reduction in accuracy across standard benchmark datasets~\cite{wang2020mobilecount}.
+
+\section{Methodology}
+\subsection{Models}
+
+Two CNN-based density-estimation models are trained and evaluated: the accurate but computationally heavy CSRNet~\cite{li2018csrnet}, and the lightweight, efficiency-oriented MobileCount~\cite{wang2020mobilecount}. Together, they represent complementary points on the accuracy--efficiency trade-off.
+
+\subsubsection{CSRNet}
+CSRNet pairs a front-end feature extractor with a dilated convolutional back-end~\cite{yu2016multiscale, li2018csrnet}. The front-end comprises the first ten layers of a pre-trained VGG-16 network~\cite{simonyan2015vgg} with the classification layers removed; its three max-pooling operations reduce the spatial resolution to $H/8 \times W/8$ while providing strong transfer-learning capacity. Rather than downsampling further, the back-end uses dilated convolutions to enlarge the receptive field without reducing resolution or adding parameters, aggregating multi-scale context at a constant spatial size~\cite{yu2016multiscale, li2018csrnet}. Configuration B is used here, applying a uniform dilation rate of 2 throughout the back-end and identified in the original paper as the most accurate of the four proposed~\cite{li2018csrnet}. A final $1 \times 1$ convolution collapses the feature maps to a single channel at $H/8 \times W/8$, bilinearly upsampled by a factor of eight to the input resolution.
+
+\subsubsection{MobileCount}
+MobileCount is an encoder--decoder network~\cite{wang2020mobilecount}. Its encoder is based on MobileNetV2~\cite{sandler2018mobilenetv2}, whose inverted residual blocks with linear bottlenecks separate spatial filtering from channel mixing through depthwise convolutions, substantially reducing the parameter count relative to standard convolutions. MobileCount retains only four of MobileNetV2's seven bottleneck blocks and inserts an additional stride-2 max-pooling layer at the start of the encoder, both of which the original paper reports cut FLOPs considerably at a tolerable cost to accuracy~\cite{wang2020mobilecount}. The decoder follows the Light-Weight RefineNet~\cite{nekrasov2018lightweight}, progressively fusing the four encoder feature maps---spanning $H/4 \times W/4$ to $H/32 \times W/32$---through chained residual pooling and fusion blocks back up to $H/4$. A final $1 \times 1$ convolution maps this to a single channel, bilinearly upsampled by a factor of four to the input resolution~\cite{wang2020mobilecount}.
+
+\subsection{Ground Truth Generation}
+
+Point annotations are derived from the centre of each bounding box to construct a discrete point map, which is then convolved with a Gaussian kernel to give the ground-truth density map~\cite{lempitsky2010learning, Zhang_2016_CVPR}. Let $\Omega$ denote the pixel grid of a training image, so that a density map assigns a scalar to every pixel $\mathbf{x} \in \Omega$. For image $i$ containing $M_i$ annotated larvae at positions $\mathbf{x}_1, \dots, \mathbf{x}_{M_i}$, the ground truth $D_i^{GT}$ is defined pixelwise as:
+\begin{equation}
+  \label{eq:density-map}
+  D_i^{GT}(\mathbf{x}) = \sum_{j=1}^{M_i} \left( \delta(\mathbf{x} - \mathbf{x}_j) * G_{\sigma} \right)(\mathbf{x}),
+  \qquad \mathbf{x} \in \Omega
+\end{equation}
+
+where $\delta(\mathbf{x} - \mathbf{x}_j)$ is a Dirac delta function centred at the larva position $\mathbf{x}_j$ and $G_{\sigma}$ is an isotropic Gaussian kernel with standard deviation $\sigma$. The kernel is normalized to unit mass, so that summing $D_i^{GT}$ over all pixels recovers the annotated count $M_i$.
+
+\subsection{Loss Function}
+
+Both models produce a predicted density map $D_i^{PM}$ on the same grid $\Omega$ as the ground truth. Training minimises the mean squared error between the two, computed pixel by pixel and averaged over all pixels and all images in a mini-batch~\cite{li2018csrnet, wang2020mobilecount}:
+\begin{equation}
+  \label{eq:mse-loss}
+  \mathcal{L} = \frac{1}{N \lvert \Omega \rvert} \sum_{i=1}^{N} \sum_{\mathbf{x} \in \Omega}
+  \left( D_i^{PM}(\mathbf{x}) - D_i^{GT}(\mathbf{x}) \right)^2
+\end{equation}
+where $N$ is the number of images in the mini-batch and $\lvert \Omega \rvert$ is the number of pixels per image. The population estimate for an image is then obtained by summing the predicted density map over the full pixel grid~\cite{lempitsky2010learning}.
+
+\section{Experiments}
+\subsection{Dataset}
+This study uses the TenebrioVision dataset~\cite{Papadopoulos2024TenebrioVision},
+comprising 1{,}120 images at $3088 \times 2076$ pixels, grouped into 14 count
+levels of 80 images each. Every image in a level contains a fixed number of
+\textit{Tenebrio molitor} larvae---10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70,
+80, 90 or 100---and each larva is labelled with a bounding box, giving 53{,}600
+annotated instances. It is the only publicly available dataset reflecting the
+high-density conditions of industrial larvae farming.
+
+Following the split protocol of~\cite{Papadopoulos2024TenebrioVision}, the data
+is stratified by count level and divided into training, validation and test sets
+in a $75:15:10$ ratio, shuffling within each level with a fixed seed (42). This
+yields 840 training, 168 validation and 112 test images.
+
+All experiments operate on a resolution ladder derived from this data by
+progressively halving the original images (rounding up on odd dimensions),
+giving $1544\times1038$, $772\times519$, $386\times260$, $193\times130$,
+$97\times65$ and $49\times33$. Resizing is applied identically to all three
+subsets, preserving the split across variants.
+
+\subsection{Implementation Details}
+\label{sec:impl_details}
+
+All experiments are implemented in the C\textsuperscript{3}
+Framework~\cite{gao2019c3}, whose authors tuned CSRNet and MobileCount on
+ShanghaiTech Part~B. That dataset shares the fixed viewpoint, roughly constant
+object size and comparatively uniform density of TenebrioVision, so its
+published configuration is used as the baseline
+(Table~\ref{tab:baseline_hyperparameters}). Weight decay is fixed at the
+framework default of $1\times10^{-4}$ and the learning rate follows the default
+step decay of $\gamma = 0.995$ per epoch. All training, evaluation and
+measurement is performed in PyTorch on an NVIDIA GeForce RTX 5070~Ti with
+16\,GB of VRAM.
+
+\begin{table}[t]
+    \centering
+    \caption{C\textsuperscript{3} Framework (baseline) hyperparameters.}
+    \label{tab:baseline_hyperparameters}
+    \begin{tabular}{lcc}
+        \toprule
+        Hyperparameter          & CSRNet             & MobileCount \\
+        \midrule
+        Optimiser               & \multicolumn{2}{c}{Adam} \\
+        Weight decay            & \multicolumn{2}{c}{$1\times10^{-4}$} \\
+        Batch size              & \multicolumn{2}{c}{$6$} \\
+        LR decay                & \multicolumn{2}{c}{step, $\gamma = 0.995$} \\
+        Initial learning rate   & $1\times10^{-5}$   & $1\times10^{-4}$ \\
+        Density-target scale $k$ & $100$             & $2550$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Density-target scaling.}
+The framework multiplies the density-map regression target by a constant $k$ and
+divides the prediction by $k$ at evaluation. Since a density map sums to the
+object count, its per-pixel magnitude is inversely proportional to pixel count,
+making $k$ resolution-dependent. The published values ($k = 100$ for CSRNet,
+$k = 2550$ for MobileCount) are anchored to $772\times519$, the variant closest
+in pixel count to ShanghaiTech Part~B, and scaled in proportion elsewhere:
+\begin{equation}
+    k(r) \;=\; k_{\mathrm{base}}\cdot \frac{A(r)}{A(772\times519)},
+    \label{eq:logpara_scaling}
+\end{equation}
+where $A(\cdot)$ denotes pixel count. Here $k$ is a deterministic function of
+resolution rather than a tuned quantity.
+
+\paragraph{Ground-truth generation.}
+Ground truth is generated via Eq.~\eqref{eq:density-map} using the fixed-kernel
+strategy CSRNet
+applies on ShanghaiTech Part~B, giving an object-to-kernel ratio of
+$\sigma = \mathrm{bbox}/2$, where $\mathrm{bbox}$ is the average larva
+bounding-box size in TenebrioVision. Scaled proportionally with resolution, this
+yields $\sigma = 24, 12, 6, 3, 2, 1$ pixels from the largest variant to the
+smallest, rounded to the nearest pixel at the two smallest scales. The kernel is
+truncated to an effective window of $8\sigma + 1$ pixels.
+
+\subsection{Experimental Design}
+
+The evaluation proceeds in two stages. Stage~1 establishes a training
+configuration for each architecture; Stage~2 holds that configuration fixed and
+varies only the input resolution. No hyperparameter is tuned per resolution.
+
+\subsubsection{Stage 1: Configuration experiments}
+
+Tuning is performed independently for each architecture. Both models start from
+the baseline configuration of Table~\ref{tab:baseline_hyperparameters}, and each
+experiment sweeps one parameter while the others are held at their baseline
+values. The value determined in each experiment is used in all subsequent
+experiments.
+
+\paragraph{Tuning resolution and budget.}
+Every tuning run is trained for a fixed budget of 1500 epochs, by which point
+the per-epoch decay of $\gamma = 0.995$ has reduced the learning rate to roughly
+$5\times10^{-4}$ of its initial value. Tuning is performed at $386\times260$,
+the mid-range point of the ladder, where a run takes ${\approx}1$\,h for
+MobileCount and ${\approx}2.7$\,h for CSRNet; at $1544\times1038$ a single
+CSRNet run takes ${\approx}26$\,h.
+
+\paragraph{E1 --- Augmentation scheme.}
+Three schemes are compared on both architectures: no augmentation; the online
+scheme of MobileCount, a random crop spanning $80\%$ of the image drawn afresh
+at every iteration~\cite{wang2020mobilecount}; and the offline scheme of CSRNet,
+which expands each image into $18$ fixed patches, namely four non-overlapping
+quarters and five random quarter-size crops, each duplicated by horizontal
+mirroring~\cite{li2018csrnet}.
+
+\paragraph{E2 --- Optimiser and learning rate.}
+Since weight decay is non-zero, Adam is compared with AdamW (decoupled weight
+decay) across a shared learning-rate grid, spanning $10^{-6}$--$10^{-3}$ for
+CSRNet and $10^{-5}$--$10^{-2}$ for MobileCount.
+
+\paragraph{E3 --- Batch size.}
+The candidates $B\in\{1,2,4,6,8\}$ include $B=1$, used in the original CSRNet
+work~\cite{li2018csrnet}, and $B=6$, the framework default. Because the optimal
+learning rate for adaptive optimisers scales with the square root of the batch
+size~\cite{malladi2022sdes}, each candidate is evaluated at
+\begin{equation}
+    \eta(B) \;=\; \eta^\star\sqrt{B/6},
+    \label{eq:lr_batch_scaling}
+\end{equation}
+anchored at $B=6$, the batch size held fixed while $\eta^\star$ was selected in
+E2, so the anchor cell reproduces the E2 configuration exactly.
+
+\paragraph{E4 --- Epoch budget across resolutions.}
+The configuration selected in E1--E3 is run once at every resolution for the
+full 1500-epoch budget to locate where convergence occurs along the ladder.
+This experiment selects no hyperparameter; it fixes the training budget carried
+into Stage~2.
+
+\subsubsection{Stage 2: Cross-resolution comparison}
+Each architecture's Stage~1 configuration is held fixed while the input
+resolution is varied across the six ladder variants. Each of the twelve
+architecture--resolution cells is trained, selected and evaluated over five
+independent runs, and results are reported as the aggregate across those runs.
+
+\subsection{Evaluation Metrics}
+\label{sec:eval_metrics}
+Following standard practice in the crowd-counting
+literature~\cite{gao2020crowdcountingsurvey, li2018csrnet}, accuracy is measured
+by Mean Absolute Error (MAE) and Mean Squared Error (MSE):
+
+\begin{equation}
+    \text{MAE} = \frac{1}{N} \sum_{i=1}^{N} \left| y_i - \hat{y}_i \right|,
+    \label{eq:mae}
+\end{equation}
+\begin{equation}
+    \text{MSE} = \sqrt{\frac{1}{N} \sum_{i=1}^{N}
+    \left( y_i - \hat{y}_i \right)^2},
+    \label{eq:mse}
+\end{equation}
+where $N$ is the number of test images, $y_i$ the ground-truth count and
+$\hat{y}_i$ the predicted count. Following the convention of the crowd-counting
+literature, MSE here denotes the \emph{root} mean squared error, so that both
+metrics are expressed in larvae and are directly comparable; it penalises large
+errors more heavily and is therefore sensitive to outliers.
+
+Efficiency is measured by peak inference memory, defined as the PyTorch
+allocator's peak memory consumption during a single forward pass, covering model
+weights, the input tensor and the maximum intermediate activations held
+simultaneously. Because this is a deterministic property of a given
+configuration, it is measured once per experimental cell.
+
+\section{Results}
+\label{sec:results}
+
+Throughout, italics mark the C\textsuperscript{3} Framework default where one
+was among the evaluated settings and bold marks the best result in each block.
+Unless stated otherwise, tuning runs use $386\times260$ and selection is on
+validation MAE.
+
+\subsection{Hyperparameter Tuning}
+\label{subsec:res_tuning}
+
+This subsection reports the three sequential One-Factor-at-a-Time (OFAT) tuning
+stages --- augmentation, optimiser and learning rate, and batch size --- and
+closes with the configuration carried into the cross-resolution experiments.
+
+\begin{table}[t]
+    \centering
+    \caption{E1 --- Augmentation tuning --- Training- and validation-split MAE at the
+    best-validation checkpoint.}
+    \label{tab:aug_paper_schemes}
+    \small
+    \begin{tabular}{l rrr rrr}
+        \toprule
+        & \multicolumn{3}{c}{CSRNet} & \multicolumn{3}{c}{MobileCount} \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-7}
+        Scheme        & val & test & epoch & val & test & epoch \\
+        \midrule
+        none          & $3.514$ & $3.280$          & $8$   & $0.605$ & $0.760$          & $150$ \\
+        $80\%$ crop   & $3.513$ & $\mathbf{3.097}$ & $14$  & $0.632$ & $\mathbf{0.618}$ & $185$ \\
+        $18$-patch    & $4.074$ & $3.549$          & $640$ & $0.622$ & $0.700$          & $112$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Table~\ref{tab:aug_paper_schemes} compares the three augmentation schemes. The
+online crop attains the lowest test MAE for both architectures and the offline
+$18$-patch scheme the highest. The validation split does not reproduce this
+ordering: for CSRNet the crop and no-augmentation runs are separated by $0.001$,
+a single unit in the last reported digit, and for MobileCount the
+no-augmentation run is nominally the best of the three.
+
+\begin{table}[t]
+    \centering
+    \caption{E2 --- Best validation MAE over the optimiser $\times$ learning-rate
+    grid.}
+    \label{tab:lr_grid}
+    \begin{tabular}{ccc@{\hspace{2em}}ccc}
+        \toprule
+        \multicolumn{3}{c}{CSRNet} & \multicolumn{3}{c}{MobileCount}\\
+          LR& \emph{Adam} & AdamW & LR & \emph{Adam} & AdamW \\
+        \midrule
+        $10^{-6}$ & $2.74$          & $0.923$          & $10^{-5}$ & $0.880$          & $0.831$ \\
+        $10^{-5}$ & $\mathit{3.51}$ & $0.394$          & $10^{-4}$ & $\mathit{0.632}$ & $0.542$ \\
+        $10^{-4}$ & $4.33$          & $\mathbf{0.320}$ & $10^{-3}$ & $0.420$          & $\mathbf{0.385}$ \\
+    \end{tabular}
+\end{table}
+
+Table~\ref{tab:lr_grid} shows AdamW yielding lower validation MAE at every grid
+point, with each architecture's optimum at the highest rate at which training
+remained stable. The top decade of each sweep --- $10^{-3}$ for CSRNet and
+$10^{-2}$ for MobileCount --- is omitted from the table: at those rates neither
+network learned, validation MAE plateauing at approximately $22.88$ and $23.14$
+respectively --- close to the $23.3$ mean absolute deviation of the count
+distribution, and therefore consistent with a collapse to a constant
+prediction.
+
+\begin{table}[t]
+\centering
+\caption{E3 --- Batch-size sweep with the learning rate rescaled
+from each architecture's optimal learning rate by $\sqrt{b/6}$.}
+\label{tab:batchsize}
+\begin{tabular}{l cc@{\hspace{2em}}cc}
+\toprule
+ & \multicolumn{2}{c}{CSRNet} & \multicolumn{2}{c}{MobileCount} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+Batch size & LR & MAE & LR & MAE \\
+\midrule
+$1$          & $4.0\times10^{-5}$ & $\mathbf{0.288}$ & $4.0\times10^{-4}$ & $2.85$ \\
+$2$          & $6.0\times10^{-5}$ & $0.292$          & $6.0\times10^{-4}$ & $0.543$ \\
+$4$          & $8.0\times10^{-5}$ & $0.307$          & $8.0\times10^{-4}$ & $0.436$ \\
+$\mathit{6}$ & $1.0\times10^{-4}$ & $0.320$          & $1.0\times10^{-3}$ & $\mathbf{0.385}$ \\
+$8$          & $1.2\times10^{-4}$ & $0.319$          & $1.2\times10^{-3}$ & $0.460$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two architectures respond to batch size in opposite directions
+(Table~\ref{tab:batchsize}). CSRNet improves as the batch size falls below the
+default and is best at batch size $1$; the trend is monotone over every step
+except the last, where the two largest batches differ by $0.001$, a single unit
+in the last reported digit. MobileCount instead has an interior optimum at the
+default and degrades on both sides of it, collapsing by a factor of seven at
+batch size $1$.
+
+E4 runs the selected configuration once at every resolution for the full
+$1500$-epoch budget. Across these twelve runs the best-validation epoch falls
+between epoch $33$ and epoch $445$, and validation MAE at epoch $1500$ is higher
+than at that checkpoint in every case, so the second half of the budget only
+overfits. An $800$-epoch budget is therefore carried into Stage~2.
+The checkpoint values themselves (Table~\ref{tab:e4_budget}) show CSRNet
+improving monotonically with resolution, whereas MobileCount is best at
+$386\times260$ and degrades above it.
+
+\begin{table}[t]
+    \centering
+    \caption{Final selected configurations.}
+    \label{tab:final_configs}
+    \begin{tabular}{lcc}
+        \toprule
+        & CSRNet & MobileCount \\
+        \midrule
+        Optimiser             & \multicolumn{2}{c}{AdamW} \\
+        Initial learning rate & $4\times10^{-5}$ & $1\times10^{-3}$ \\
+        Batch size            & $1$ & $6$ \\
+        Weight decay          & \multicolumn{2}{c}{$1\times10^{-4}$} \\
+        LR schedule           & \multicolumn{2}{c}{step $\gamma=0.995$} \\
+        Training budget       & \multicolumn{2}{c}{$800$ epochs} \\
+        Augmentation          & \multicolumn{2}{c}{online $80\%$ crop} \\
+        Density-target scale $k$ & $100$ & $2550$ \\
+        & \multicolumn{2}{c}{\footnotesize scaled per Eq.~\eqref{eq:logpara_scaling}} \\
+        Random seed      & \multicolumn{2}{c}{$3035$} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The resulting configuration is summarised in Table~\ref{tab:final_configs}.
+These settings are held fixed for the remainder of the evaluation; only the
+input resolution and the density-target scale $k$, which is rescaled with
+resolution according to Eq.~\eqref{eq:logpara_scaling}, vary across the
+cross-resolution experiments.
+
+% ============================================================================
+\subsection{Cross-Resolution Evaluation}
+\label{subsec:res_resolution}
+
+Table~\ref{tab:resolution_test} reports test error for both architectures
+across the resolution ladder, aggregated over five runs;
+Figure~\ref{fig:density_maps} shows the corresponding predicted density maps
+for a representative test image.
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{images/test_error_vs_resolution_repeats.png}
+    \caption{Test (a)~MAE and (b)~MSE against input resolution, on log axes.
+    Markers are means over five runs and bars span one standard deviation.}
+    \label{fig:allres_trend}
+\end{figure}
+Point estimates of both metrics decrease monotonically with resolution for
+both architectures, and both attain their lowest error at $1544\times1038$.
+Table~\ref{tab:resolution_test} and Figure~\ref{fig:allres_trend} show how the
+two ladders differ in shape. CSRNet reduces MAE by a near-constant factor across
+three consecutive doublings ($36\%$, $48\%$, $41\%$), tapering to $15\%$ on the
+final step. MobileCount's gains are unevenly distributed: two steps are
+effectively flat ($49\times33 \to 97\times65$, $6\%$; $386\times260 \to
+772\times519$, $9\%$, both within one standard deviation), separated by two
+large ones ($64\%$ and $48\%$) and followed by a further $27\%$ reduction at the
+top of the ladder.
+
+The smallest resolution is a special case for CSRNet. Its MAE of $6.55$ is more
+than twice MobileCount's, its best checkpoint occurs at epoch $33$ --- the
+earliest of any CSRNet cell, and the only one at which all five runs peaked
+together --- and its predicted density map carries no spatial structure
+(Figure~\ref{fig:density_maps}), the count arising from a near-uniform mass
+rather than from localised responses.
+
+The ordering between the architectures reverses once on MAE, and only at the
+coarse end. MobileCount is lower at $49\times33$; CSRNet is lower at
+$97\times65$; the two are indistinguishable at $193\times130$ and
+$386\times260$, where the differences ($0.006$ and $0.001$) are an order of
+magnitude smaller than the run-to-run spread; and CSRNet is lower at
+$772\times519$ and $1544\times1038$ with non-overlapping intervals.
+
+The two metrics do not agree. MobileCount attains the lower MSE at every
+resolution except $97\times65$ --- including $772\times519$ and
+$1544\times1038$, where CSRNet's MAE is clearly lower, although at those two the
+intervals overlap. The ratio between the metrics separates the architectures
+more cleanly than either alone: MobileCount's MSE/MAE ratio is near-constant
+across the ladder ($1.32$--$1.42$), whereas CSRNet's rises from $1.20$ at
+$49\times33$ to between $2.0$ and $2.2$ from $193\times130$ upward.
+
+Run-to-run spread is larger for MobileCount at every resolution except
+$49\times33$. Relative to the mean, CSRNet's spread narrows overall along the
+ladder, from $12\%$ of its MAE at $49\times33$ to $0.8\%$ at $1544\times1038$,
+though not monotonically: it rebounds to $4\%$ at $772\times519$. MobileCount's
+shows no such trend, holding between $7\%$ and $18\%$ throughout. The best-epoch
+ranges show a matching asymmetry: MobileCount's shift markedly earlier at the
+top two resolutions ($100$--$252$ and $28$--$255$) relative to $357$--$579$ and
+$367$--$693$ at $193\times130$ and $386\times260$, whereas CSRNet's remain late
+at every resolution above the coarsest.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.96\linewidth]{images/mae_vs_memory_repeats.png}
+    \caption{Accuracy--memory frontier: test MAE averaged over the $5$
+    repeats against peak inference memory, for all twelve
+    network~$\times$~resolution cells.}
+    \label{fig:acc_vs_mem}
+\end{figure}
+Figure~\ref{fig:acc_vs_mem} plots test MAE against peak inference memory for all
+twelve configurations. MobileCount is between $5.5$ and $8.1\times$ lighter than
+CSRNet at every resolution. Model weights account for a static $13.1$\,MB of
+this for MobileCount, $4.9\times$ less than CSRNet's $63.8$\,MB, and dominate the
+footprint at the coarse end: at $49\times33$ peak memory is $13.4$\,MB for
+MobileCount against $85.9$\,MB for CSRNet. Above $386\times260$ --- where the two
+require $25.7$\,MB and $164.8$\,MB --- activations dominate instead and scale by
+roughly $4\times$ per step, matching the growth in pixel count, reaching
+$204.0$\,MB and $1648.8$\,MB respectively at $1544\times1038$.
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Configuring the Two Architectures}
+\label{subsec:disc_hyper}
+
+AdamW is the better optimiser for both networks. CSRNet's ImageNet-pretrained,
+batch-norm-free VGG-16 frontend~\cite{li2018csrnet} is eroded by Adam's coupled
+weight decay wherever gradients are small, leaving Adam uncompetitive at every
+rate tested; MobileCount, batch-normalised and trained from scratch, is largely
+invariant to the scale of its weights and tolerates coupled decay far better.
+The same architectural difference drives the batch-size split: MobileCount's
+normalisation statistics degenerate when a batch holds a single sample, whereas
+CSRNet contains no batch normalisation and is best in exactly that setting,
+consistent with its original publication~\cite{li2018csrnet}. Neither
+configuration transfers --- batch size $1$ costs MobileCount a factor of seven
+in validation MAE, and MobileCount's learning rate is one at which CSRNet does
+not train at all. Hyperparameters published alongside a crowd-counting
+architecture are therefore not portable to a different backbone even with task
+and dataset fixed, and the framework defaults are a poor start for either.
+
+\subsection{Accuracy Scaling with Input Fidelity (RQ1)}
+\label{subsec:disc_accuracy}
+
+\paragraph{What bounds accuracy changes along the ladder.}
+CSRNet's collapse at the coarsest resolution is explained by its prediction grid
+rather than its capacity: at $H/8$ it has fewer output cells than larvae to
+represent, so no arrangement of weights can express the target and the reported
+count comes from a near-uniform mass (Figure~\ref{fig:density_maps}).
+MobileCount, predicting at $H/4$, is never grid-limited on this ladder, which
+also explains why the two networks' largest and smallest gains fall on the same
+step --- the one where CSRNet's grid first exceeds the mean count. Through the
+middle of the ladder the inputs carry enough signal for both networks but too
+little fine detail for extra capacity to be convertible; accuracy there is
+bounded by input fidelity, and only at the top by architecture.
+
+\paragraph{Two error distributions, not one ranking.}
+The metrics disagree because the networks fail differently. CSRNet's rising
+MSE-to-MAE ratio suggests its capacity buys a better typical frame at the cost
+of a heavier tail of severe miscounts, while MobileCount's flat ratio indicates
+errors tightly distributed about its mean. Since rearing decisions are threshold
+judgements on single observations, the flatter distribution is the more useful
+property, partly offsetting CSRNet's MAE advantage.
+
+\paragraph{An optimisation caveat.}
+MobileCount's early best checkpoints at the finest resolutions and its
+degradation on both splits point to a learning rate transported from
+$386\times260$ being too aggressive at sixteen times the pixel count. Its
+high-resolution results are plausibly a lower bound, and the gap to CSRNet at
+the top of the ladder correspondingly overstated.
+
+\subsection{Memory Scaling with Input Fidelity (RQ2)}
+\label{subsec:disc_memory}
+
+Peak inference memory has two regimes, and the transition between them
+determines where downscaling stops paying. 
+
+At the three smallest resolutions the
+footprint is weight-dominated and effectively flat, so reducing resolution further saves almost nothing; the step to $386\times260$ is where activations catch the weights, and above it they dominate and peak usage tracks pixel count. Beyond $386\times260$ activations dominate and peak usage tracks pixel count. Downscaling below $193\times130$ therefore sacrifices substantial accuracy for negligible memory --- a floor on the useful
+part of the ladder imposed from the memory side rather than the accuracy side.
+Because MobileCount carries roughly a fifth of CSRNet's weights, its flat regime
+sits an order of magnitude lower and the ratio between the two stays within
+$5.5$--$8.1\times$ throughout. Backbone and resolution thus act on memory almost
+independently: there is no input size at which the heavier network becomes the
+cheaper one to run, and no downscaling that closes the gap.
+
+\subsection{The Accuracy--Memory Frontier (RQ3)}
+\label{subsec:disc_pareto}
+
+All six MobileCount configurations are Pareto-optimal, whereas four of CSRNet's
+six are dominated outright. The decisive cell is MobileCount at $386\times260$:
+it matches CSRNet at the same resolution to within $0.001$ MAE --- far below
+either network's run-to-run spread --- for $25.7$\,MB against $164.8$\,MB, and
+is both more accurate and cheaper than all three of CSRNet's coarser
+configurations. CSRNet enters the frontier only at the high-accuracy end, buying
+an $11\%$ MAE reduction over MobileCount's best for $2.3\times$ the memory at
+$772\times519$, and $24\%$ for $8.1\times$ the memory at $1544\times1038$. Both purchases are on the MAE metric alone: on MSE
+MobileCount remains ahead at both of those resolutions, so CSRNet's corner of
+the frontier is narrower than Figure~\ref{fig:acc_vs_mem} alone suggests.
+
+\subsection{Deployment on the Jetson Nano (RQ4)}
+\label{subsec:disc_deployment}
+
+The Jetson Nano shares a nominal $4$\,GB of RAM between CPU and GPU, of which
+about $3.9$\,GB is addressable and a further ${\approx}750$\,MB is consumed by
+the operating system, drivers, and CUDA runtime. Every one of the twelve
+configurations fits the remaining ${\approx}3.15$\,GB: the
+largest footprint measured, CSRNet's $1.6$\,GB at $1544\times1038$, occupies
+about half of it, and the smallest, MobileCount's $13.4$\,MB at $49\times33$,
+about $0.4\%$. Memory is therefore not the binding constraint on this hardware,
+and the question becomes how much accuracy the application actually requires.
+Counting systems in operational insect rearing report errors of
+$2.3$--$6\%$~\cite{mamai2019, benedict2020}; from $193\times130$ upward both
+networks stay below $2\%$ of the dataset's mean count of $47.9$ larvae, so every
+configuration from that resolution up already clears the operational bar, and
+memory spent climbing further buys accuracy the application does not use.
+
+Three considerations converge on MobileCount at $386\times260$. It costs
+$9.5$\,MB more than $193\times130$, the cheapest cell clearing the accuracy bar,
+and halves the counting error for that outlay; it sits at the crossover between the two memory regimes, the last resolution at which weights still account for half its footprint, before each further doubling multiplies memory by roughly four; and
+it is the resolution at which the hyperparameters were tuned, hence the last
+below the instability discussed in Section~\ref{subsec:disc_accuracy}. Where the memory budget is tighter than this,
+$193\times130$ remains the smallest configuration that still clears the bar;
+where average error must be pushed lower still, CSRNet at $772\times519$ is the
+next Pareto-optimal step, at roughly $18\times$ the memory.
+
+\section{Limitations}
+\label{sec:limitations}
+
+\paragraph{Tuning protocol}
+Hyperparameters were tuned one axis at a time in a fixed order, each
+configuration trained once and the learning rate swept at decade granularity.
+This OFAT procedure cannot observe interactions between stages, and the
+configuration it converges on is conditional on the order in which the axes were
+visited. Because augmentation came first, both networks were still running the
+default Adam configuration when the crop was selected, and the scheme was never
+re-validated under AdamW. The $800$-epoch budget was also tight in the middle of
+the ladder, where MobileCount's best checkpoint fell as late as epoch $693$.
+
+\paragraph{Hyperparameters transported from a single resolution}
+The central limitation is that hyperparameters were optimised at $386\times260$
+and applied unchanged across the ladder. This is what allows differences across
+resolutions to be read as effects of input scale, but it confounds the top of
+the ladder: MobileCount's high-resolution instability cannot be separated from a
+transported learning rate simply too aggressive at four to sixteen times the
+pixel count. Had it trained stably at $772\times519$ and above, it might have
+approached the heavier network's accuracy at a fraction of the memory.
+Separating an optimisation artefact from a genuine capacity ceiling requires
+per-resolution retuning, which the frozen protocol excludes by construction.
+
+\paragraph{Memory measurement and deployment estimate}
+Peak memory is the PyTorch allocator's peak allocation for a single
+\texttt{fp32} forward pass on a desktop GPU, and so excludes batching, the
+preprocessing pipeline and camera capture buffers. Quantisation or a TensorRT
+deployment would act mainly on the weight footprint that dominates the smallest
+resolutions, and CSRNet, being weight-heavy, has proportionally more to gain, so
+the $5.5$--$8.1\times$ ratio is an upper bound on the gap under an optimised
+runtime. The Jetson Nano figures are estimates against the module's nominal
+capacity rather than measurements on the device.
+
+\paragraph{Dataset and task scope}
+All results come from a single dataset. TenebrioVision is the only public
+benchmark reflecting industrial rearing densities, but it is captured under
+controlled conditions with a fixed viewpoint and counts topping out at $100$
+larvae per image, whereas production trays are denser and more variable in
+substrate, lighting and larval instar. The figures reported here should be read
+as an upper bound on production imagery, and the comparison against the
+$2.3$--$6\%$ range reported for operational counting
+systems~\cite{mamai2019, benedict2020} is across measurement settings rather
+than like for like. Ground-truth points blurred with a single fixed $\sigma$ per
+resolution likewise suit roughly uniform larva size but would not transfer to
+trays of mixed instars.
+
+\section{Conclusion}
+% ============================================================
+This thesis compared two strategies for density-based counting of
+\textit{Tenebrio molitor} larvae under edge-hardware memory constraints: a
+heavyweight network on downscaled inputs against a lightweight one with headroom
+for larger inputs. Density estimation proved viable for the task and remarkably
+robust to downscaling, both networks counting to within one larva at
+$193\times130$, a sixteenth of the native image in each dimension.
+
+Beyond that point the two levers behave differently. Accuracy keeps improving
+with resolution but with sharply diminishing returns above $386\times260$,
+whereas memory is flat below that point and proportional to pixel count above
+it, the two backbones separated by a near-constant $5.5$--$8.1\times$. The
+answer to the main research question is therefore that input fidelity, not
+architectural capacity, is where a memory budget should go---but only as far as
+the knee, since MobileCount occupies the entire accuracy--memory frontier apart
+from its high-accuracy corner.
+
+On the Jetson Nano memory turns out not to be the binding constraint at all:
+every configuration fits, and every one from $193\times130$ upward already meets
+the error tolerances reported for operational insect rearing. MobileCount at
+$386\times260$ is the recommended operating point, counting to within $1\%$ of
+the mean tray population at $25.7$\,MB. The heavyweight network is justified
+only where sub-$0.3$-larva mean error is a hard requirement, and even that niche
+may be contestable, since MobileCount's high-resolution ceiling reflects
+optimisation instability under transported hyperparameters rather than a
+demonstrated capacity limit. Confirming this on the device, with per-resolution
+retuning, is the natural next step.
+\clearpage
+\onecolumn
+\section*{Appendix}
+\label{sec:appendix}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth, height=0.8\textheight, keepaspectratio]{images/density_example_80_18_allres.png}
+    \caption{Predicted density maps across the resolution ladder for test image
+    \texttt{80\_18} (ground-truth count $80$). Columns show the input, the
+    ground-truth density map, and the CSRNet and MobileCount predictions;
+    all density maps share the colour scale at right.}
+    \label{fig:density_maps}
+\end{figure}
+
+\begin{table*}[t]
+    \centering
+    \caption{Cross-resolution test results. Values are mean $\pm$ standard
+    deviation over five runs; ``Epoch'' gives the range of best-validation
+    epochs across those runs. Best value per column in bold.
+    $^{*}$Resolution at which hyperparameters were tuned.}
+    \label{tab:resolution_test}
+    \small
+    \begin{tabular}{l c c c c c c}
+        \toprule
+        & \multicolumn{3}{c}{CSRNet} & \multicolumn{3}{c}{MobileCount} \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-7}
+        Resolution & Epoch & MAE & MSE & Epoch & MAE & MSE \\
+        \midrule
+        $49\times33$      & $33$         & $6.551 \pm 0.782$          & $7.849 \pm 0.689$          & $196$--$361$ & $2.711 \pm 0.478$          & $3.584 \pm 0.670$ \\
+        $97\times65$      & $145$--$328$ & $1.395 \pm 0.131$          & $2.307 \pm 0.227$          & $43$--$309$  & $2.549 \pm 0.258$          & $3.543 \pm 0.290$ \\
+        $193\times130$    & $231$--$351$ & $0.899 \pm 0.046$          & $1.866 \pm 0.114$          & $357$--$579$ & $0.905 \pm 0.084$          & $1.236 \pm 0.131$ \\
+        $386\times260^{*}$& $349$--$425$ & $0.472 \pm 0.005$          & $0.992 \pm 0.009$          & $367$--$693$ & $0.471 \pm 0.034$          & $0.658 \pm 0.041$ \\
+        $772\times519$    & $145$--$536$ & $0.279 \pm 0.012$          & $0.614 \pm 0.047$          & $100$--$252$ & $0.429 \pm 0.045$          & $0.582 \pm 0.042$ \\
+        $1544\times1038$  & $229$--$268$ & $\mathbf{0.238 \pm 0.002}$ & $\mathbf{0.483 \pm 0.012}$ & $28$--$255$  & $\mathbf{0.312 \pm 0.035}$ & $\mathbf{0.444 \pm 0.039}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \caption{E4 --- Train- and validation-split MAE at the best-validation
+    checkpoint and at the end of the fixed $1500$-epoch budget, for each
+    resolution. Best validation MAE per architecture in bold.}
+    \label{tab:e4_budget}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{@{}l rr rr rr rr@{}}
+        \toprule
+        & \multicolumn{4}{c}{CSRNet} & \multicolumn{4}{c}{MobileCount} \\
+        \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+        & \multicolumn{2}{c}{Checkpoint} & \multicolumn{2}{c}{Epoch 1500}
+        & \multicolumn{2}{c}{Checkpoint} & \multicolumn{2}{c}{Epoch 1500} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+        Resolution & Train & Val & Train & Val & Train & Val & Train & Val \\
+        \midrule
+        $49\times33$      & $5.94$ & $5.96$ & $12.63$ & $12.52$ & $2.61$ & $2.68$ & $6.29$ & $6.12$ \\
+        $97\times65$      & $0.81$ & $1.03$ & $1.38$  & $1.46$  & $2.06$ & $1.91$ & $2.39$ & $2.49$ \\
+        $193\times130$    & $0.29$ & $0.53$ & $0.21$  & $0.60$  & $0.86$ & $0.86$ & $1.15$ & $1.39$ \\
+        $386\times260$    & $0.16$ & $0.29$ & $0.07$  & $0.32$  & $0.40$ & $\mathbf{0.39}$ & $0.46$ & $0.49$ \\
+        $772\times519$    & $0.08$ & $0.19$ & $0.04$  & $0.23$  & $0.44$ & $0.43$ & $1.46$ & $1.59$ \\
+        $1544\times1038$  & $0.09$ & $\mathbf{0.18}$ & $0.04$ & $0.24$ & $0.33$ & $0.43$ & $1.49$ & $1.58$ \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\clearpage
+\twocolumn
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

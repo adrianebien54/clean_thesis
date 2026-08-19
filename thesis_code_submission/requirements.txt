@@ -1,0 +1,24 @@
+# Python 3.12.3
+#
+# Versions below are the ones the reported results were produced with.
+# Install PyTorch first, matched to your CUDA version (see https://pytorch.org).
+# The results in the thesis were produced on an NVIDIA GeForce RTX 5070 Ti (16 GB).
+
+torch==2.11.0
+torchvision==0.26.0
+
+# C-3-Framework core
+easydict==1.13
+tensorboardX==2.6.5
+tensorboard==2.20.0        # also used to READ tfevents in the eval/plot scripts
+numpy==2.4.4
+scipy==1.17.1              # gaussian_filter, for density-map generation
+pillow==12.2.0
+pandas==3.0.2
+
+# added for this thesis
+h5py==3.14.0               # density maps are stored as .h5
+matplotlib==3.10.8         # all figures
+
+# NOTE: ptflops is NOT a dependency -- a copy ships inside C-3-Framework at
+# models/ptflops/ and is imported from there by scripts/resolution/measure_flops_time.py.
